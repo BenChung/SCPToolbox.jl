@@ -579,6 +579,8 @@ function add_trust_region!(spbm::Subproblem)::Nothing
     ηu = spbm.ηu
     ηp = spbm.ηp
 
+
+    if q == 8 return end
     q2cone = Dict(1 => L1, 2 => SOC, 4 => SOC, Inf => LINF)
     cone = q2cone[q]
 
@@ -780,10 +782,37 @@ function compute_trust_region_penalty!(spbm::Subproblem)::Nothing
     ηu = spbm.ηu
     ηp = spbm.ηp
 
-    spbm.J_tr = @add_cost(prg, (ηx, ηu, ηp), begin
-        local ηx, ηu, ηp = arg
-        wtr * (trapz(ηx, t) + trapz(ηu, t) + ηp[1])
-    end)
+
+    N = spbm.def.pars.N
+    q = spbm.def.pars.q_tr
+    if q == 8
+        scale = spbm.def.common.scale
+        x = spbm.x
+        u = spbm.u
+        p = spbm.p
+        xh_ref = scale.iSx * (spbm.ref.xd .- scale.cx)
+        uh_ref = scale.iSu * (spbm.ref.ud .- scale.cu)
+        ph_ref = scale.iSp * (spbm.ref.p - scale.cp)
+
+        spbm.J_tr = @add_cost(
+            prg,
+            (x, u, p),
+            begin
+                local (ix, iu, ip) = arg
+                local dx = [scale.iSx * (ix[:, k] - scale.cx) - xh_ref[:, k] for k=1:N]
+                local dx2 = vec(sum(hcat((dx[k] .* dx[k] for k=1:N)...); dims=1))
+                local du = [scale.iSu * (iu[:, k] - scale.cu) - uh_ref[:, k] for k=1:N]
+                local du2 = vec(sum(hcat((du[k] .* du[k] for k=1:N)...); dims=1))
+                local dp = scale.iSp * (ip - scale.cp) - ph_ref
+                wtr * (trapz(dx2, t) + trapz(du2, t) + sum(dp .* dp))
+            end
+        )
+    else
+        spbm.J_tr = @add_cost(prg, (ηx, ηu, ηp), begin
+            local ηx, ηu, ηp = arg
+            wtr * (trapz(ηx, t) + trapz(ηu, t) + ηp[1])
+        end)
+    end
 
     return nothing
 end
