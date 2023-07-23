@@ -837,10 +837,130 @@ function compute_virtual_control_penalty!(spbm::Subproblem)::Nothing
     vs = spbm.vs
     vic = spbm.vic
     vtc = spbm.vtc
+    
+    Pf = @new_variable(prg, 2, "Pf")
 
+    q = spbm.def.pars.q_tr
+    if q == 8 
+        
+        # Initial condition relaxation penalty
+        if !isnothing(vic)
+            @add_constraint(prg, SOC, "vic_penalty", (Pf[1], vic), begin
+                local Pf1, vic = arg
+                vcat(Pf1, vic)
+            end)
+            @add_cost(prg, (vic, Pf[1]), begin 
+                local vici, Pfi = arg
+                wvc * (sum(vici .^2) + Pfi)
+            end)
+        else
+            @add_constraint(prg, SOC, "vic_penalty", (Pf[1]), begin
+                local Pf1, = arg
+                Pf1
+            end)
+        end
+
+        # Terminal condition relaxation penalty
+        if !isnothing(vtc)
+            @add_constraint(prg, SOC, "vtc_penalty", (Pf[2], vtc), begin
+                local Pf2, vtc = arg
+                vcat(Pf2, vtc)
+            end)
+            @add_cost(prg, (vtc, Pf[2]), begin 
+                local vici, Pfi = arg
+                wvc * (sum(vici .^2) + Pfi)
+            end)
+        else
+            @add_constraint(prg, ZERO, "vtc_penalty", (Pf[2],), begin
+                local Pf2, = arg
+                Pf2
+            end)
+        end
+
+        P = @new_variable(prg, N, "P")
+        if !isnothing(vs)
+            for k = 1:N-1
+                @add_constraint(
+                    prg,
+                    SOC,
+                    "vd_vs_penalty",
+                    (P[k], vd[:, k], vs[:, k]),
+                    begin
+                        local Pk, vdk, vsk = arg
+                        vcat(Pk, E[:, :, k] * vdk, vsk)
+                    end
+                )
+            end
+            @add_constraint(
+                prg,
+                SOC,
+                "vd_vs_penalty",
+                (P[N], vs[:, N]),
+                begin
+                    local Pk, vsk = arg
+                    vcat(Pk, vsk)
+                end
+            )
+            spbm.J_vc =@add_cost(
+                prg,
+                (vd, vs, P, Pf),
+                begin
+                    local vdl, vsl, Ps, Pfi = arg
+                    wvc * (sum(sum(E[:, :, k] .^ 2 .* (vdl[:, k]) .^ 2) for k=1:N-1) + sum(sum(vsl[:,k] .^ 2) for k=1:N) + sum(Ps) + sum(Pfi))
+                end
+            )
+        else        
+            for k = 1:N-1
+                @add_constraint(
+                    prg,
+                    SOC,
+                    "vd_vs_penalty",
+                    (P[k], vd[:, k]),
+                    begin
+                        local Pk, vdk = arg
+                        vcat(Pk, E[:, :, k] * vdk)
+                    end
+                )
+            end    
+            spbm.J_vc =@add_cost(
+                prg,
+                (vd, P, Pf),
+                begin
+                    local vdl,Ps,Pfi = arg
+                    wvc * (sum(sum((E[:, :, k] * vdl[:, k]) .^ 2) for k=1:N-1) + sum(Ps) + sum(Pfi))
+                end
+            )
+        end
+        return nothing
+    end
+
+    # Initial condition relaxation penalty
+    if !isnothing(vic)
+        @add_constraint(prg, L1, "vic_penalty", (Pf[1], vic), begin
+            local Pf1, vic = arg
+            vcat(Pf1, vic)
+        end)
+    else
+        @add_constraint(prg, ZERO, "vic_penalty", (Pf[1]), begin
+            local Pf1, = arg
+            Pf1
+        end)
+    end
+
+    # Terminal condition relaxation penalty
+    if !isnothing(vtc)
+        @add_constraint(prg, L1, "vtc_penalty", (Pf[2], vtc), begin
+            local Pf2, vtc = arg
+            vcat(Pf2, vtc)
+        end)
+    else
+        @add_constraint(prg, ZERO, "vtc_penalty", (Pf[2],), begin
+            local Pf2, = arg
+            Pf2
+        end)
+    end
     # Virtual control penalty
     P = @new_variable(prg, N, "P")
-    Pf = @new_variable(prg, 2, "Pf")
     if !isnothing(vs)
         for k = 1:N
             if k < N
@@ -887,32 +1007,6 @@ function compute_virtual_control_penalty!(spbm::Subproblem)::Nothing
                 end)
             end
         end
-    end
-
-    # Initial condition relaxation penalty
-    if !isnothing(vic)
-        @add_constraint(prg, L1, "vic_penalty", (Pf[1], vic), begin
-            local Pf1, vic = arg
-            vcat(Pf1, vic)
-        end)
-    else
-        @add_constraint(prg, ZERO, "vic_penalty", (Pf[1]), begin
-            local Pf1, = arg
-            Pf1
-        end)
-    end
-
-    # Terminal condition relaxation penalty
-    if !isnothing(vtc)
-        @add_constraint(prg, L1, "vtc_penalty", (Pf[2], vtc), begin
-            local Pf2, vtc = arg
-            vcat(Pf2, vtc)
-        end)
-    else
-        @add_constraint(prg, ZERO, "vtc_penalty", (Pf[2],), begin
-            local Pf2, = arg
-            Pf2
-        end)
     end
 
     spbm.J_vc = @add_cost(prg, (P, Pf), begin
